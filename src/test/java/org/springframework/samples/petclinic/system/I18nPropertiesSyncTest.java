@@ -2,6 +2,7 @@ package org.springframework.samples.petclinic.system;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -49,38 +50,37 @@ public class I18nPropertiesSyncTest {
 		}
 
 		StringBuilder report = new StringBuilder();
-
 		for (Path file : files) {
-			List<String> lines = Files.readAllLines(file);
-			for (int i = 0; i < lines.size(); i++) {
-				String line = lines.get(i).trim();
-
-				if (line.startsWith("//") || line.startsWith("@") || line.contains("log.")
-						|| line.contains("System.out")) {
-					continue;
-				}
-
-				if (file.toString().endsWith(".html")) {
-					boolean hasLiteralText = HTML_TEXT_LITERAL.matcher(line).find();
-					boolean hasThTextAttribute = HAS_TH_TEXT_ATTRIBUTE.matcher(line).find();
-					boolean isBracketOnly = BRACKET_ONLY.matcher(line).find();
-
-					if (hasLiteralText && !line.contains("#{") && !hasThTextAttribute && !isBracketOnly) {
-						report.append("HTML: ")
-							.append(file)
-							.append(" Line ")
-							.append(i + 1)
-							.append(": ")
-							.append(line)
-							.append("\n");
-					}
-				}
-			}
+			appendHardcodedStrings(file, report);
 		}
 
 		if (!report.isEmpty()) {
 			fail("Hardcoded (non-internationalized) strings found:\n" + report);
 		}
+	}
+
+	private void appendHardcodedStrings(Path file, StringBuilder report) throws IOException {
+		if (!file.toString().endsWith(".html")) {
+			return;
+		}
+		List<String> lines = Files.readAllLines(file);
+		for (int i = 0; i < lines.size(); i++) {
+			String line = lines.get(i).trim();
+			if (!isSkippedLine(line) && isHardcodedHtmlText(line)) {
+				report.append("HTML: ").append(file).append(" Line ").append(i + 1).append(": ").append(line).append("\n");
+			}
+		}
+	}
+
+	private boolean isSkippedLine(String line) {
+		return line.startsWith("//") || line.startsWith("@") || line.contains("log.") || line.contains("System.out");
+	}
+
+	private boolean isHardcodedHtmlText(String line) {
+		return HTML_TEXT_LITERAL.matcher(line).find()
+				&& !line.contains("#{")
+				&& !HAS_TH_TEXT_ATTRIBUTE.matcher(line).find()
+				&& !BRACKET_ONLY.matcher(line).find();
 	}
 
 	@Test
@@ -92,15 +92,7 @@ public class I18nPropertiesSyncTest {
 				.toList();
 		}
 
-		Map<String, Properties> localeToProps = new HashMap<>();
-
-		for (Path path : propertyFiles) {
-			Properties props = new Properties();
-			try (var reader = Files.newBufferedReader(path)) {
-				props.load(reader);
-				localeToProps.put(path.getFileName().toString(), props);
-			}
-		}
+		Map<String, Properties> localeToProps = loadProperties(propertyFiles);
 
 		String baseFile = BASE_NAME + PROPERTIES;
 		Properties baseProps = localeToProps.get(baseFile);
@@ -111,27 +103,39 @@ public class I18nPropertiesSyncTest {
 
 		Set<String> baseKeys = baseProps.stringPropertyNames();
 		StringBuilder report = new StringBuilder();
-
 		for (Map.Entry<String, Properties> entry : localeToProps.entrySet()) {
-			String fileName = entry.getKey();
-			// We use fallback logic to include english strings, hence messages_en is not
-			// populated.
-			if (fileName.equals(baseFile) || "messages_en.properties".equals(fileName)) {
-				continue;
-			}
-
-			Properties props = entry.getValue();
-			Set<String> missingKeys = new TreeSet<>(baseKeys);
-			missingKeys.removeAll(props.stringPropertyNames());
-
-			if (!missingKeys.isEmpty()) {
-				report.append("Missing keys in ").append(fileName).append(":\n");
-				missingKeys.forEach(k -> report.append("  ").append(k).append("\n"));
-			}
+			appendMissingKeys(entry, baseFile, baseKeys, report);
 		}
 
 		if (!report.isEmpty()) {
 			fail("Translation files are not in sync:\n" + report);
+		}
+	}
+
+	private Map<String, Properties> loadProperties(List<Path> propertyFiles) throws IOException {
+		Map<String, Properties> localeToProps = new HashMap<>();
+		for (Path path : propertyFiles) {
+			Properties props = new Properties();
+			try (var reader = Files.newBufferedReader(path)) {
+				props.load(reader);
+			}
+			localeToProps.put(path.getFileName().toString(), props);
+		}
+		return localeToProps;
+	}
+
+	private void appendMissingKeys(Map.Entry<String, Properties> entry, String baseFile,
+			Set<String> baseKeys, StringBuilder report) {
+		String fileName = entry.getKey();
+		// We use fallback logic to include english strings, hence messages_en is not populated.
+		if (fileName.equals(baseFile) || "messages_en.properties".equals(fileName)) {
+			return;
+		}
+		Set<String> missingKeys = new TreeSet<>(baseKeys);
+		missingKeys.removeAll(entry.getValue().stringPropertyNames());
+		if (!missingKeys.isEmpty()) {
+			report.append("Missing keys in ").append(fileName).append(":\n");
+			missingKeys.forEach(k -> report.append("  ").append(k).append("\n"));
 		}
 	}
 
